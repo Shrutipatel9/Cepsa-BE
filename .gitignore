@@ -1,0 +1,37 @@
+# Python Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Sensitive Environment Files (Supabase Credentials & DB Passwords)
+.env
+.env.local
+.env.*
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Local SQLite databases
+*.db
+*.sqlite3
+
+# Distribution / packages
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
