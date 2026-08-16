@@ -7,12 +7,13 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
-from ..models import Category, Product, ProductImage, Inquiry, User
+from ..models import Category, Product, ProductImage, Inquiry, User, GalleryItem
 from ..schemas import (
     LoginRequest, TokenResponse, DashboardStats, ProductResponse, ProductCreate, ProductUpdate,
-    CategoryResponse, CategoryCreate, CategoryUpdate, InquiryResponse
+    CategoryResponse, CategoryCreate, CategoryUpdate, InquiryResponse, GalleryItemResponse
 )
 from ..auth import verify_password, create_access_token, get_current_admin
+from ..supabase_storage import upload_media_to_gallery_bucket, delete_media_from_gallery_bucket
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin APIs"])
 
@@ -157,7 +158,7 @@ def admin_get_products(current_user: User = Depends(get_current_admin), db: Sess
     products = db.query(Product).options(
         joinedload(Product.category),
         joinedload(Product.images)
-    ).order_by(Product.id.desc()).all()
+    ).order_by(Product.id.asc()).all()
     return products
 
 @router.post("/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
@@ -342,3 +343,90 @@ def delete_inquiry(
     db.delete(inquiry)
     db.commit()
     return {"message": f"Inquiry #{inquiry_id} deleted successfully"}
+
+# ================= GALLERY MANAGEMENT =================
+
+PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg"}
+VIDEO_EXTENSIONS = {".mp4", ".webm", ".ogg", ".mov", ".avi", ".mkv"}
+
+@router.get("/gallery", response_model=List[GalleryItemResponse])
+def admin_get_gallery(
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    return db.query(GalleryItem).order_by(GalleryItem.display_order.asc(), GalleryItem.id.desc()).all()
+
+@router.post("/gallery/upload", response_model=GalleryItemResponse, status_code=status.HTTP_201_CREATED)
+def admin_upload_gallery_item(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    display_order: Optional[int] = Form(0),
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    filename = file.filename or "file"
+    file_ext = os.path.splitext(filename)[1].lower()
+    content_type = file.content_type or ""
+
+    is_photo = file_ext in PHOTO_EXTENSIONS or content_type.startswith("image/")
+    is_video = file_ext in VIDEO_EXTENSIONS or content_type.startswith("video/")
+
+    if not (is_photo or is_video):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file type. Only photo (JPG, PNG, WEBP, GIF, SVG) and video (MP4, WEBM, MOV, AVI) files are allowed."
+        )
+
+    item_type = "video" if is_video else "photo"
+
+    try:
+        file_bytes = file.file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read uploaded file: {str(e)}")
+
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    # Upload file directly to Supabase Storage 'gallery' bucket
+    public_url, storage_filename = upload_media_to_gallery_bucket(
+        file_bytes=file_bytes,
+        filename=filename,
+        content_type=content_type or ("video/mp4" if item_type == "video" else "image/jpeg")
+    )
+
+    # Default media title to "Media 1", "Media 2", etc. if no name provided
+    if not title or not title.strip():
+        existing_count = db.query(GalleryItem).count()
+        item_title = f"Media {existing_count + 1}"
+    else:
+        item_title = title.strip()
+
+    gallery_item = GalleryItem(
+        title=item_title,
+        item_type=item_type,
+        file_url=public_url,
+        file_name=storage_filename,
+        display_order=display_order or 0
+    )
+    db.add(gallery_item)
+    db.commit()
+    db.refresh(gallery_item)
+    return gallery_item
+
+@router.delete("/gallery/{item_id}")
+def admin_delete_gallery_item(
+    item_id: int,
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    item = db.query(GalleryItem).filter(GalleryItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Gallery item not found")
+
+    # Delete from Supabase Storage 'gallery' bucket
+    delete_media_from_gallery_bucket(file_name=item.file_name or "", file_url=item.file_url)
+
+    db.delete(item)
+    db.commit()
+    return {"message": f"Gallery item #{item_id} deleted successfully"}
+

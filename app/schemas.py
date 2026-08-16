@@ -129,3 +129,27 @@ class DashboardStats(BaseModel):
     total_categories: int
     total_inquiries: int
     featured_products: int
+
+# Gallery Schemas
+class GalleryItemBase(BaseModel):
+    title: Optional[str] = None
+    item_type: str = "photo"  # "photo" or "video"
+    display_order: int = 0
+
+class GalleryItemCreate(GalleryItemBase):
+    file_url: str
+    file_name: Optional[str] = None
+
+class GalleryItemUpdate(BaseModel):
+    title: Optional[str] = None
+    display_order: Optional[int] = None
+
+class GalleryItemResponse(GalleryItemBase):
+    id: int
+    file_url: str
+    file_name: Optional[str] = None
+    created_at: datetime.datetime
+
+    class Config:
+        from_attributes = True
+

@@ -81,3 +81,16 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(String(20), default="admin")
     is_active = Column(Boolean, default=True)
+
+
+class GalleryItem(Base):
+    __tablename__ = "gallery_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(150), nullable=True)
+    item_type = Column(String(20), nullable=False)  # "photo" or "video"
+    file_url = Column(String(500), nullable=False)  # Supabase gallery bucket URL or fallback local upload
+    file_name = Column(String(255), nullable=True)  # Storage object name in Supabase
+    display_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+

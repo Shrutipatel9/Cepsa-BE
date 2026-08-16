@@ -3,12 +3,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from ..database import get_db
-from ..models import Category, Product, Inquiry
+from ..models import Category, Product, Inquiry, GalleryItem
 from ..schemas import (
-    CategoryResponse, ProductResponse, InquiryCreate, InquiryResponse
+    CategoryResponse, ProductResponse, InquiryCreate, InquiryResponse, GalleryItemResponse
 )
 
 router = APIRouter(prefix="/api/v1/public", tags=["Public APIs"])
+
+@router.get("/gallery", response_model=List[GalleryItemResponse])
+def get_public_gallery(db: Session = Depends(get_db)):
+    return db.query(GalleryItem).order_by(GalleryItem.display_order.asc(), GalleryItem.id.desc()).all()
 
 @router.get("/categories", response_model=List[CategoryResponse])
 def get_categories(db: Session = Depends(get_db)):
@@ -46,7 +50,7 @@ def get_products(
             )
         )
 
-    products = query.order_by(Product.id.desc()).offset(skip).limit(limit).all()
+    products = query.order_by(Product.id.asc()).offset(skip).limit(limit).all()
     return products
 
 @router.get("/products/{id_or_slug}", response_model=ProductResponse)
