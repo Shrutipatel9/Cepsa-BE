@@ -357,7 +357,7 @@ def sync_gallery_items_with_supabase(db):
         db.commit()
         db.expire_all()
 
-    query = db.query(GalleryItem).order_by(GalleryItem.display_order.asc(), GalleryItem.id.desc())
+    query = db.query(GalleryItem).order_by(GalleryItem.display_order.asc(), GalleryItem.id.asc())
     visible = []
     for item in query.all():
         if not is_supabase_gallery_url(item.file_url or ""):

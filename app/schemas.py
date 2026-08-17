@@ -153,3 +153,10 @@ class GalleryItemResponse(GalleryItemBase):
     class Config:
         from_attributes = True
 
+class GalleryReorderItem(BaseModel):
+    id: int
+    display_order: int
+
+class GalleryReorderRequest(BaseModel):
+    items: List[GalleryReorderItem]
+

@@ -8,7 +8,8 @@ from ..database import get_db
 from ..models import Category, Product, ProductImage, Inquiry, User, GalleryItem
 from ..schemas import (
     LoginRequest, TokenResponse, DashboardStats, ProductResponse, ProductCreate, ProductUpdate,
-    CategoryResponse, CategoryCreate, CategoryUpdate, InquiryResponse, GalleryItemResponse
+    CategoryResponse, CategoryCreate, CategoryUpdate, InquiryResponse, GalleryItemResponse,
+    GalleryReorderRequest
 )
 from ..auth import verify_password, create_access_token, get_current_admin
 from ..supabase_storage import (
@@ -414,4 +415,17 @@ def admin_delete_gallery_item(
     db.delete(item)
     db.commit()
     return {"message": f"Gallery item #{item_id} deleted successfully"}
+
+@router.put("/gallery/reorder")
+def admin_reorder_gallery_items(
+    reorder_in: GalleryReorderRequest,
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    for item_data in reorder_in.items:
+        db.query(GalleryItem).filter(GalleryItem.id == item_data.id).update(
+            {"display_order": item_data.display_order}
+        )
+    db.commit()
+    return {"message": "Gallery items reordered successfully"}
 
