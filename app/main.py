@@ -3,8 +3,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .database import engine, Base
+from .database import engine, Base, SessionLocal
 from .routers import public, admin
+from .supabase_storage import ensure_storage_infrastructure, migrate_local_files_to_supabase
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -56,6 +57,22 @@ def on_startup():
             conn.commit()
         except Exception:
             pass
+
+    def _migrate_local_uploads():
+        try:
+            ensure_storage_infrastructure()
+        except Exception as e:
+            print(f"[Supabase Storage] Bootstrap error: {e}")
+        db = SessionLocal()
+        try:
+            migrate_local_files_to_supabase(db, UPLOAD_DIR)
+        except Exception as e:
+            print(f"[Supabase Migration] Unexpected error: {e}")
+        finally:
+            db.close()
+
+    from threading import Thread
+    Thread(target=_migrate_local_uploads, daemon=True, name="supabase-upload-migration").start()
 
 @app.get("/")
 def read_root():

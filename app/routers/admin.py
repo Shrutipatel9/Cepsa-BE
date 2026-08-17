@@ -1,6 +1,4 @@
 import os
-import shutil
-import uuid
 import re
 import json
 from typing import List, Optional
@@ -13,7 +11,15 @@ from ..schemas import (
     CategoryResponse, CategoryCreate, CategoryUpdate, InquiryResponse, GalleryItemResponse
 )
 from ..auth import verify_password, create_access_token, get_current_admin
-from ..supabase_storage import upload_media_to_gallery_bucket, delete_media_from_gallery_bucket
+from ..supabase_storage import (
+    CATEGORIES_BUCKET,
+    PRODUCTS_BUCKET,
+    delete_media,
+    delete_media_from_gallery_bucket,
+    sync_gallery_items_with_supabase,
+    upload_file,
+    upload_media_to_gallery_bucket,
+)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin APIs"])
 
@@ -137,15 +143,7 @@ def delete_category(
         raise HTTPException(status_code=404, detail="Category not found")
 
     if category.image_url:
-        clean_url = category.image_url.split("?")[0]
-        base_name = os.path.basename(clean_url)
-        if base_name and not base_name.startswith("http"):
-            file_path = os.path.join(UPLOAD_DIR, base_name)
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception as e:
-                    print(f"Error removing category image file: {e}")
+        delete_media(category.image_url, upload_dir=UPLOAD_DIR)
 
     db.delete(category)
     db.commit()
@@ -253,15 +251,7 @@ def delete_product(
 
     for img in product.images:
         if img.image_url:
-            clean_url = img.image_url.split("?")[0]
-            base_name = os.path.basename(clean_url)
-            if base_name and not base_name.startswith("http"):
-                file_path = os.path.join(UPLOAD_DIR, base_name)
-                if os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        print(f"Error removing product image file: {e}")
+            delete_media(img.image_url, upload_dir=UPLOAD_DIR)
 
     db.delete(product)
     db.commit()
@@ -273,40 +263,33 @@ def delete_product(
 def upload_image(
     file: UploadFile = File(...),
     existing_url: Optional[str] = Form(None),
+    kind: Optional[str] = Form("product"),
     current_user: User = Depends(get_current_admin)
 ):
-    file_ext = os.path.splitext(file.filename)[1].lower()
-    if not file_ext:
-        file_ext = ".jpg"
+    try:
+        file_bytes = file.file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read uploaded file: {e}")
 
-    target_filename = None
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    if existing_url and "/uploads/" in existing_url:
-        clean_url = existing_url.split("?")[0]
-        base_name = os.path.basename(clean_url)
-        if base_name:
-            stem = os.path.splitext(base_name)[0]
-            if stem and os.path.exists(UPLOAD_DIR):
-                for old_f in os.listdir(UPLOAD_DIR):
-                    if os.path.splitext(old_f)[0] == stem:
-                        old_path = os.path.join(UPLOAD_DIR, old_f)
-                        try:
-                            if os.path.exists(old_path):
-                                os.remove(old_path)
-                        except Exception as e:
-                            print(f"Error removing old image {old_path}: {e}")
-                target_filename = f"{stem}{file_ext}"
+    bucket = CATEGORIES_BUCKET if (kind or "").strip().lower() == "category" else PRODUCTS_BUCKET
 
-    if not target_filename:
-        unique_id = uuid.uuid4().hex
-        target_filename = f"{unique_id}{file_ext}"
+    try:
+        public_url, _object_path = upload_file(
+            file_bytes=file_bytes,
+            filename=file.filename or "image.jpg",
+            content_type=file.content_type or "image/jpeg",
+            bucket=bucket,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
-    file_path = os.path.join(UPLOAD_DIR, target_filename)
+    if existing_url:
+        delete_media(existing_url, upload_dir=UPLOAD_DIR)
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    return {"image_url": f"/uploads/{target_filename}"}
+    return {"image_url": public_url}
 
 @router.get("/inquiries", response_model=List[InquiryResponse])
 def get_admin_inquiries(
@@ -354,7 +337,7 @@ def admin_get_gallery(
     current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
-    return db.query(GalleryItem).order_by(GalleryItem.display_order.asc(), GalleryItem.id.desc()).all()
+    return sync_gallery_items_with_supabase(db)
 
 @router.post("/gallery/upload", response_model=GalleryItemResponse, status_code=status.HTTP_201_CREATED)
 def admin_upload_gallery_item(
@@ -387,12 +370,14 @@ def admin_upload_gallery_item(
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    # Upload file directly to Supabase Storage 'gallery' bucket
-    public_url, storage_filename = upload_media_to_gallery_bucket(
-        file_bytes=file_bytes,
-        filename=filename,
-        content_type=content_type or ("video/mp4" if item_type == "video" else "image/jpeg")
-    )
+    try:
+        public_url, storage_filename = upload_media_to_gallery_bucket(
+            file_bytes=file_bytes,
+            filename=filename,
+            content_type=content_type or ("video/mp4" if item_type == "video" else "image/jpeg")
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
     # Default media title to "Media 1", "Media 2", etc. if no name provided
     if not title or not title.strip():

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from ..database import get_db
+from ..supabase_storage import sync_gallery_items_with_supabase
 from ..models import Category, Product, Inquiry, GalleryItem
 from ..schemas import (
     CategoryResponse, ProductResponse, InquiryCreate, InquiryResponse, GalleryItemResponse
@@ -12,7 +13,7 @@ router = APIRouter(prefix="/api/v1/public", tags=["Public APIs"])
 
 @router.get("/gallery", response_model=List[GalleryItemResponse])
 def get_public_gallery(db: Session = Depends(get_db)):
-    return db.query(GalleryItem).order_by(GalleryItem.display_order.asc(), GalleryItem.id.desc()).all()
+    return sync_gallery_items_with_supabase(db)
 
 @router.get("/categories", response_model=List[CategoryResponse])
 def get_categories(db: Session = Depends(get_db)):
