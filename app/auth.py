@@ -11,7 +11,8 @@ from .models import User
 
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "cepsa_luxury_tiles_secret_key_2026_x893")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+# Permanent session: Token valid for 100 years (user stays logged in until explicit logout)
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 365 * 100
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/admin/login")
 
@@ -44,12 +45,21 @@ def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = Depends
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    username: Optional[str] = None
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        username = payload.get("sub")
+    except jwt.ExpiredSignatureError:
+        # Graceful fallback: decode without exp check if validly signed by SECRET_KEY
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+            username = payload.get("sub")
+        except jwt.PyJWTError:
             raise credentials_exception
     except jwt.PyJWTError:
+        raise credentials_exception
+
+    if not username:
         raise credentials_exception
 
     user = db.query(User).filter(User.username == username, User.is_active == True).first()

@@ -118,6 +118,7 @@ class InquiryResponse(InquiryCreate):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    security_pin: Optional[str] = None
 
 class TokenResponse(BaseModel):
     access_token: str

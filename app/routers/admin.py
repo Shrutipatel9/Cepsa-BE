@@ -33,8 +33,38 @@ def generate_slug(text: str) -> str:
     slug = re.sub(r'[\s_-]+', '-', slug)
     return slug
 
-# Rate Limiting Tracker
+# Rate Limiting Tracker & Master Security PIN
 FAILED_LOGIN_ATTEMPTS = {}
+MASTER_SECURITY_PIN = os.getenv("ADMIN_SECURITY_PIN", "202688")
+
+@router.post("/verify-credentials")
+def verify_admin_credentials(login_data: LoginRequest, db: Session = Depends(get_db)):
+    import time
+    ip = "client_default"
+    
+    if ip in FAILED_LOGIN_ATTEMPTS:
+        attempts, lock_until = FAILED_LOGIN_ATTEMPTS[ip]
+        if time.time() < lock_until:
+            remaining_mins = int((lock_until - time.time()) / 60) + 1
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many failed login attempts. Access temporarily locked for {remaining_mins} minute(s)."
+            )
+
+    # Level 1 Verification: Username & Password
+    user = db.query(User).filter(User.username == login_data.username).first()
+    if not user or not verify_password(login_data.password, user.hashed_password):
+        attempts, _ = FAILED_LOGIN_ATTEMPTS.get(ip, (0, 0))
+        new_attempts = attempts + 1
+        lock_until = time.time() + (15 * 60) if new_attempts >= 5 else 0
+        FAILED_LOGIN_ATTEMPTS[ip] = (new_attempts, lock_until)
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password.",
+        )
+
+    return {"valid": True, "message": "Level 1 Credentials Accepted"}
 
 @router.post("/login", response_model=TokenResponse)
 def admin_login(login_data: LoginRequest, db: Session = Depends(get_db)):
@@ -52,6 +82,7 @@ def admin_login(login_data: LoginRequest, db: Session = Depends(get_db)):
         elif time.time() >= lock_until and attempts >= 5:
             FAILED_LOGIN_ATTEMPTS[ip] = (0, 0)
 
+    # Level 1 Verification: Username & Password
     user = db.query(User).filter(User.username == login_data.username).first()
     if not user or not verify_password(login_data.password, user.hashed_password):
         attempts, _ = FAILED_LOGIN_ATTEMPTS.get(ip, (0, 0))
@@ -61,12 +92,28 @@ def admin_login(login_data: LoginRequest, db: Session = Depends(get_db)):
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin credentials",
+            detail="Level 1 Verification Failed: Invalid username or password.",
+        )
+
+    # Level 2 Verification: 6-Digit Master Security PIN
+    if not login_data.security_pin or login_data.security_pin.strip() != MASTER_SECURITY_PIN:
+        attempts, _ = FAILED_LOGIN_ATTEMPTS.get(ip, (0, 0))
+        new_attempts = attempts + 1
+        lock_until = time.time() + (15 * 60) if new_attempts >= 5 else 0
+        FAILED_LOGIN_ATTEMPTS[ip] = (new_attempts, lock_until)
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Level 2 Verification Failed: Invalid 6-digit Master Security PIN.",
         )
     
     FAILED_LOGIN_ATTEMPTS[ip] = (0, 0)
     access_token = create_access_token(data={"sub": user.username, "role": user.role})
     return {"access_token": access_token, "token_type": "bearer", "username": user.username}
+
+@router.get("/verify-token")
+def verify_admin_token(current_user: User = Depends(get_current_admin)):
+    return {"valid": True, "username": current_user.username, "role": current_user.role}
 
 @router.get("/dashboard/stats", response_model=DashboardStats)
 def get_dashboard_stats(current_user: User = Depends(get_current_admin), db: Session = Depends(get_db)):
