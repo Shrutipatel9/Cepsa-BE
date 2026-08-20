@@ -18,9 +18,6 @@ SUPABASE_KEY = (
 )
 USING_SERVICE_ROLE = bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
 GALLERY_BUCKET = os.getenv("SUPABASE_GALLERY_BUCKET", "gallery")
-PRODUCTS_BUCKET = os.getenv("SUPABASE_PRODUCTS_BUCKET", "products")
-CATEGORIES_BUCKET = os.getenv("SUPABASE_CATEGORIES_BUCKET", "categories")
-ALL_BUCKETS = (PRODUCTS_BUCKET, CATEGORIES_BUCKET, GALLERY_BUCKET)
 
 supabase_client = None
 _init_error = ""
@@ -128,10 +125,9 @@ def ensure_storage_infrastructure() -> None:
     engine = create_engine(database_url)
     try:
         with engine.begin() as conn:
-            for bucket in ALL_BUCKETS:
-                conn.execute(text(bucket_sql), {"id": bucket, "name": bucket})
+            conn.execute(text(bucket_sql), {"id": GALLERY_BUCKET, "name": GALLERY_BUCKET})
             conn.execute(text(policy_sql))
-        print("[Supabase Storage] Buckets ready: products, categories, gallery.")
+        print(f"[Supabase Storage] Single bucket ready: '{GALLERY_BUCKET}'")
     except Exception as e:
         print(f"[Supabase Storage] Could not bootstrap buckets/policies: {e}")
     finally:
@@ -175,7 +171,7 @@ def upload_file(
     file_bytes: bytes,
     filename: str,
     content_type: str = "",
-    bucket: str = PRODUCTS_BUCKET,
+    bucket: str = GALLERY_BUCKET,
     object_path: Optional[str] = None,
 ) -> Tuple[str, str]:
     if not file_bytes:

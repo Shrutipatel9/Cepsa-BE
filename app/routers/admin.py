@@ -13,8 +13,7 @@ from ..schemas import (
 )
 from ..auth import verify_password, create_access_token, get_current_admin
 from ..supabase_storage import (
-    CATEGORIES_BUCKET,
-    PRODUCTS_BUCKET,
+    GALLERY_BUCKET,
     delete_media,
     delete_media_from_gallery_bucket,
     sync_gallery_items_with_supabase,
@@ -322,7 +321,7 @@ def upload_image(
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    bucket = CATEGORIES_BUCKET if (kind or "").strip().lower() == "category" else PRODUCTS_BUCKET
+    bucket = GALLERY_BUCKET
 
     try:
         public_url, _object_path = upload_file(

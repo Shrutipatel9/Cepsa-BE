@@ -7,8 +7,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 load_dotenv()
 
 # Default Supabase Connection URL (reads DATABASE_URL from .env if present)
-DEFAULT_SUPABASE_URL = "postgresql://postgres:[YOUR_PASSWORD]@db.wcysphccjnvzygwtknbw.supabase.co:5432/postgres"
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_SUPABASE_URL)
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Fallback to local SQLite if DATABASE_URL is not set or set to sqlite
 if "sqlite" in SQLALCHEMY_DATABASE_URL:
