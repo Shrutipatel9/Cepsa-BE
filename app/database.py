@@ -7,10 +7,10 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 load_dotenv()
 
 # Default Supabase Connection URL (reads DATABASE_URL from .env if present)
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # Fallback to local SQLite if DATABASE_URL is not set or set to sqlite
-if "sqlite" in SQLALCHEMY_DATABASE_URL:
+if not SQLALCHEMY_DATABASE_URL or "sqlite" in SQLALCHEMY_DATABASE_URL:
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     DB_PATH = os.path.join(BASE_DIR, "cepsa.db")
     SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
