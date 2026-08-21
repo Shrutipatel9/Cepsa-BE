@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from .database import engine, Base
 from .routers import public, admin
-from .supabase_storage import ensure_storage_infrastructure
+from .supabase_storage import ensure_storage_infrastructure, relocate_misplaced_gallery_assets
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -43,6 +43,7 @@ def on_startup():
             pass
         try:
             ensure_storage_infrastructure()
+            relocate_misplaced_gallery_assets()
         except Exception as e:
             print(f"[Supabase Storage] Bootstrap error: {e}")
 

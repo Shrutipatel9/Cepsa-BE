@@ -16,6 +16,7 @@ SUPABASE_KEY = (
     or os.getenv("SUPABASE_ANON_KEY")
     or ""
 )
+USING_SERVICE_ROLE = bool(os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
 GALLERY_BUCKET = os.getenv("SUPABASE_GALLERY_BUCKET", "gallery")
 PRODUCTS_BUCKET = os.getenv("SUPABASE_PRODUCTS_BUCKET", "products")
 CATEGORIES_BUCKET = os.getenv("SUPABASE_CATEGORIES_BUCKET", "categories")
@@ -174,7 +175,7 @@ def upload_file(
     file_bytes: bytes,
     filename: str,
     content_type: str = "",
-    bucket: str = GALLERY_BUCKET,
+    bucket: str = PRODUCTS_BUCKET,
     object_path: Optional[str] = None,
 ) -> Tuple[str, str]:
     if not file_bytes:
@@ -311,46 +312,30 @@ def gallery_object_name(item) -> str:
 
 def sync_gallery_items_with_supabase(db):
     """
-    Keep gallery_items aligned with the gallery bucket:
-    - drop local / missing rows
-    - create rows for bucket files that are not in the database
-    Returns only items that exist in Supabase Storage.
+    Return only gallery_items that were intentionally uploaded via Admin Gallery
+    and still exist in the Supabase `gallery` bucket.
+
+    Important: do NOT invent gallery rows for every file found in the bucket.
+    Category/product images must never appear in the gallery just because a
+    misrouted upload landed in the gallery bucket.
     """
     from .models import GalleryItem
+
+    # Remove any gallery_items that point at category/product assets.
+    remove_non_gallery_rows(db)
 
     bucket_names = list_gallery_filenames()
     items = db.query(GalleryItem).all()
 
     changed = False
-    if bucket_names is not None:
-        existing_names = set()
-        for item in items:
-            name = gallery_object_name(item)
-            in_bucket = is_supabase_gallery_url(item.file_url or "") and name in bucket_names
-            if in_bucket:
-                existing_names.add(name)
-            else:
-                db.delete(item)
-                changed = True
-
-        next_index = len(existing_names)
-        for name in sorted(bucket_names - existing_names):
-            next_index += 1
-            ext = os.path.splitext(name)[1].lower()
-            item_type = "video" if ext in VIDEO_EXTENSIONS else "photo"
-            db.add(GalleryItem(
-                title=f"Media {next_index}",
-                item_type=item_type,
-                file_url=_public_url(GALLERY_BUCKET, name),
-                file_name=name,
-                display_order=0,
-            ))
+    for item in items:
+        name = gallery_object_name(item)
+        in_bucket = is_supabase_gallery_url(item.file_url or "") and (
+            bucket_names is None or name in bucket_names
+        )
+        if not in_bucket:
+            db.delete(item)
             changed = True
-    else:
-        for item in items:
-            if not is_supabase_gallery_url(item.file_url or ""):
-                db.delete(item)
-                changed = True
 
     if changed:
         db.commit()
@@ -367,6 +352,117 @@ def sync_gallery_items_with_supabase(db):
     return visible
 
 
+def remove_non_gallery_rows(db) -> int:
+    """Delete gallery_items whose files are actually category/product images."""
+    from .models import Category, ProductImage, GalleryItem
+
+    protected_names = set()
+    for row in db.query(Category).all():
+        ref = parse_storage_ref(row.image_url or "")
+        if ref:
+            protected_names.add(os.path.basename(ref[1]))
+        if is_local_upload_url(row.image_url or ""):
+            protected_names.add(os.path.basename((row.image_url or "").split("?")[0]))
+
+    for row in db.query(ProductImage).all():
+        ref = parse_storage_ref(row.image_url or "")
+        if ref:
+            protected_names.add(os.path.basename(ref[1]))
+        if is_local_upload_url(row.image_url or ""):
+            protected_names.add(os.path.basename((row.image_url or "").split("?")[0]))
+
+    removed = 0
+    for item in db.query(GalleryItem).all():
+        name = gallery_object_name(item)
+        # Drop local URLs and any gallery row that matches a category/product file name
+        if (not is_supabase_gallery_url(item.file_url or "")) or (name and name in protected_names):
+            db.delete(item)
+            removed += 1
+
+    if removed:
+        db.commit()
+        print(f"[Gallery Sync] Removed {removed} non-gallery row(s) from gallery_items.")
+    return removed
+
+
+def relocate_misplaced_gallery_assets() -> int:
+    """
+    Move files that belong to categories/products out of the gallery bucket
+    when they were wrongly uploaded there.
+    """
+    from .database import SessionLocal
+    from .models import Category, ProductImage
+
+    try:
+        client = require_client()
+    except Exception as e:
+        print(f"[Supabase Storage] Relocate skipped: {e}")
+        return 0
+
+    bucket_names = list_gallery_filenames() or set()
+    moved = 0
+    db = SessionLocal()
+    try:
+        for row in db.query(Category).all():
+            ref = parse_storage_ref(row.image_url or "")
+            name = os.path.basename((row.image_url or "").split("?")[0])
+            if ref and ref[0] == CATEGORIES_BUCKET:
+                continue
+            # Category URL points at gallery (or products) OR same filename sits in gallery
+            source_bucket = None
+            object_path = None
+            if ref and ref[0] != CATEGORIES_BUCKET:
+                source_bucket, object_path = ref
+            elif name and name in bucket_names:
+                source_bucket, object_path = GALLERY_BUCKET, name
+            else:
+                continue
+            try:
+                file_bytes = client.storage.from_(source_bucket).download(object_path)
+                public_url = _upload_bytes(
+                    CATEGORIES_BUCKET,
+                    object_path,
+                    file_bytes,
+                    _guess_content_type(object_path),
+                )
+                row.image_url = _rewrite_local_url(row.image_url, public_url)
+                if source_bucket != CATEGORIES_BUCKET:
+                    delete_from_bucket(source_bucket, object_path)
+                moved += 1
+            except Exception as e:
+                print(f"[Supabase Storage] Could not relocate category image {object_path}: {e}")
+
+        for row in db.query(ProductImage).all():
+            ref = parse_storage_ref(row.image_url or "")
+            if not ref or ref[0] == PRODUCTS_BUCKET:
+                continue
+            source_bucket, object_path = ref
+            try:
+                file_bytes = client.storage.from_(source_bucket).download(object_path)
+                public_url = _upload_bytes(
+                    PRODUCTS_BUCKET,
+                    object_path,
+                    file_bytes,
+                    _guess_content_type(object_path),
+                )
+                row.image_url = _rewrite_local_url(row.image_url, public_url)
+                delete_from_bucket(source_bucket, object_path)
+                moved += 1
+            except Exception as e:
+                print(f"[Supabase Storage] Could not relocate product image {object_path}: {e}")
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[Supabase Storage] Misplaced asset relocate failed: {e}")
+    finally:
+        db.close()
+
+    if moved:
+        print(f"[Supabase Storage] Relocated {moved} misplaced asset(s) out of gallery.")
+    return moved
+
+
 def _rewrite_local_url(url: str, public_url: str) -> str:
     if not url:
         return url
@@ -377,43 +473,8 @@ def _rewrite_local_url(url: str, public_url: str) -> str:
 
 
 def relocate_category_images() -> int:
-    """Move category images that landed in the products bucket into categories."""
-    from .database import SessionLocal
-    from .models import Category
-
-    client = require_client()
-    moved = 0
-    db = SessionLocal()
-    try:
-        for row in db.query(Category).all():
-            ref = parse_storage_ref(row.image_url or "")
-            if not ref:
-                continue
-            bucket, object_path = ref
-            if bucket == CATEGORIES_BUCKET:
-                continue
-            try:
-                file_bytes = client.storage.from_(bucket).download(object_path)
-                public_url = _upload_bytes(
-                    CATEGORIES_BUCKET,
-                    object_path,
-                    file_bytes,
-                    _guess_content_type(object_path),
-                )
-                row.image_url = _rewrite_local_url(row.image_url, public_url)
-                delete_from_bucket(bucket, object_path)
-                moved += 1
-            except Exception as e:
-                print(f"[Supabase Storage] Could not move category image {object_path}: {e}")
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        print(f"[Supabase Storage] Category relocate failed: {e}")
-    finally:
-        db.close()
-    if moved:
-        print(f"[Supabase Storage] Moved {moved} category image(s) into '{CATEGORIES_BUCKET}'.")
-    return moved
+    """Backward-compatible alias."""
+    return relocate_misplaced_gallery_assets()
 
 
 def migrate_local_files_to_supabase(db, upload_dir: str) -> dict:
