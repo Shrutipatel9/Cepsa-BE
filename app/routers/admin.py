@@ -24,7 +24,10 @@ from ..supabase_storage import (
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin APIs"])
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+except Exception:
+    pass
 
 def generate_slug(text: str) -> str:
     slug = text.lower().strip()

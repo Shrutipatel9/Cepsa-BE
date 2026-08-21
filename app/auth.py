@@ -23,11 +23,7 @@ def get_password_hash(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     if not hashed_password or not plain_password:
         return False
-    # Check if hashed password matches
-    if get_password_hash(plain_password) == hashed_password:
-        return True
-    # Fallback to plain text check
-    return plain_password == hashed_password
+    return get_password_hash(plain_password) == hashed_password
 
 def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None) -> str:
     to_encode = data.copy()

@@ -18,24 +18,27 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Mount uploaded media directory with no-cache headers for instant image updates
+# Mount uploaded media directory safely for local development (skips on read-only serverless environments)
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    if os.path.exists(UPLOAD_DIR):
+        class NoCacheStaticFiles(StaticFiles):
+            async def get_response(self, path: str, scope):
+                response = await super().get_response(path, scope)
+                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+                return response
 
-class NoCacheStaticFiles(StaticFiles):
-    async def get_response(self, path: str, scope):
-        response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-        return response
-
-app.mount("/uploads", NoCacheStaticFiles(directory=UPLOAD_DIR), name="uploads")
+        app.mount("/uploads", NoCacheStaticFiles(directory=UPLOAD_DIR), name="uploads")
+except Exception as e:
+    print(f"[Storage Warning] Skipping local uploads mount: {e}")
 
 # Include Routers
 app.include_router(public.router)
@@ -57,22 +60,10 @@ def on_startup():
             conn.commit()
         except Exception:
             pass
-
-    def _migrate_local_uploads():
         try:
             ensure_storage_infrastructure()
         except Exception as e:
             print(f"[Supabase Storage] Bootstrap error: {e}")
-        db = SessionLocal()
-        try:
-            migrate_local_files_to_supabase(db, UPLOAD_DIR)
-        except Exception as e:
-            print(f"[Supabase Migration] Unexpected error: {e}")
-        finally:
-            db.close()
-
-    from threading import Thread
-    Thread(target=_migrate_local_uploads, daemon=True, name="supabase-upload-migration").start()
 
 @app.get("/")
 def read_root():
