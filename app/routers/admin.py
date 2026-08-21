@@ -23,12 +23,6 @@ from ..supabase_storage import (
 
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin APIs"])
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "uploads")
-try:
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-except Exception:
-    pass
-
 def generate_slug(text: str) -> str:
     slug = text.lower().strip()
     slug = re.sub(r'[^\w\s-]', '', slug)
@@ -193,7 +187,7 @@ def delete_category(
         raise HTTPException(status_code=404, detail="Category not found")
 
     if category.image_url:
-        delete_media(category.image_url, upload_dir=UPLOAD_DIR)
+        delete_media(category.image_url)
 
     db.delete(category)
     db.commit()
@@ -301,7 +295,7 @@ def delete_product(
 
     for img in product.images:
         if img.image_url:
-            delete_media(img.image_url, upload_dir=UPLOAD_DIR)
+            delete_media(img.image_url)
 
     db.delete(product)
     db.commit()
@@ -337,7 +331,7 @@ def upload_image(
         raise HTTPException(status_code=503, detail=str(e))
 
     if existing_url:
-        delete_media(existing_url, upload_dir=UPLOAD_DIR)
+        delete_media(existing_url)
 
     return {"image_url": public_url}
 

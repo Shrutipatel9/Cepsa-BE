@@ -1,11 +1,11 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
-from .database import engine, Base, SessionLocal
+from .database import engine, Base
 from .routers import public, admin
-from .supabase_storage import ensure_storage_infrastructure, migrate_local_files_to_supabase
+from .supabase_storage import ensure_storage_infrastructure
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -23,28 +23,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount uploaded media directory safely for local development (skips on read-only serverless environments)
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
-try:
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    if os.path.exists(UPLOAD_DIR):
-        class NoCacheStaticFiles(StaticFiles):
-            async def get_response(self, path: str, scope):
-                response = await super().get_response(path, scope)
-                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
-                response.headers["Pragma"] = "no-cache"
-                response.headers["Expires"] = "0"
-                return response
-
-        app.mount("/uploads", NoCacheStaticFiles(directory=UPLOAD_DIR), name="uploads")
-except Exception as e:
-    print(f"[Storage Warning] Skipping local uploads mount: {e}")
-
 # Include Routers
 app.include_router(public.router)
 app.include_router(admin.router)
-
-from sqlalchemy import text
 
 @app.on_event("startup")
 def on_startup():
